@@ -87,8 +87,8 @@ class Agent:
         self.optimizer_pi.update()
 
 
-episodes = 3000
-env = gym.make('CartPole-v0')
+episodes = 1000
+env = gym.make('CartPole-v1')
 agent = Agent()
 reward_history = []
 
@@ -118,7 +118,49 @@ for episode in range(episodes):
     if episode % 100 == 0:
         print("episode :{}, total reward : {:.1f}".format(episode, total_reward))
 
-
 # plot
 from common.utils import plot_total_reward
 plot_total_reward(reward_history)
+
+
+# === 学習したエージェントのデモンストレーション ===
+# プレイ用の環境（可視化あり）
+try:
+    # 新しいGym API用
+    play_env = gym.make('CartPole-v1', render_mode="human")  # 人間が見るためのモード
+except TypeError:
+    # 古いGym API用
+    play_env = gym.make('CartPole-v1')
+
+agent.epsilon = 0  # 評価時は常に最良の行動を選択（greedy policy）
+state = play_env.reset()
+if isinstance(state, tuple):
+    state = state[0]
+done = False
+total_reward = 0
+
+# 学習したエージェントでのシミュレーション実行
+while not done:
+    # 修正前: action = agent.get_action(state)
+    # 修正後: アクションと確率を適切に分離
+    action, prob = agent.get_action(state)
+    
+    # 新しいGym APIに対応
+    try:
+        # 新しいGym API (v0.26.0以降)
+        next_state, reward, terminated, truncated, info = play_env.step(action)
+        done = terminated or truncated
+    except ValueError:
+        # 古いGym API
+        next_state, reward, done, info = play_env.step(action)
+    state = next_state
+    total_reward += reward
+    
+    # レンダリング処理
+    try:
+        if not hasattr(play_env, 'render_mode') or play_env.render_mode is None:
+            play_env.render()  # 古いAPIの場合は明示的にレンダリング
+    except Exception:
+        pass
+        
+print('Total Reward:', total_reward)  # 最終スコアの表示
