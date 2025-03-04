@@ -64,6 +64,56 @@ $ cd ch09
 $ python actor_critic.py
 ```
 
+## 既知の問題と対処法
+
+### NumPy 1.20以降との互換性問題 (2025年3月4日追加)
+
+NumPy 1.20以降では、`np.int`などの型エイリアスが非推奨となり、NumPy 2.0以降では完全に削除されました。これにより、dezeroパッケージを使用した実行時にエラーが発生することがあります。
+
+**エラー例**：
+```
+
+**解決方法**:
+
+1. dezeroパッケージのtransforms.pyファイルを修正します。ファイルの場所を確認するには：
+
+```bash
+# dezeroパッケージの場所を確認
+python -c "import dezero; print(dezero.__file__)"
+
+# transforms.pyのパスを取得
+python -c "import dezero, os; print(os.path.join(os.path.dirname(dezero.__file__), 'transforms.py'))"
+```
+
+2. 表示されたパスのファイルを編集し、約154行目の以下のコードを：
+```bash
+class ToInt(AsType):
+    def __init__(self, dtype=np.int):
+```
+次のように変更します：
+```bash
+class ToInt(AsType):
+    def __init__(self, dtype=np.int64):
+```
+
+3. その他の型参照で問題がある場合は同様に置き換えてください：
+ - np.int → np.int64
+ - np.float → np.float64
+ - np.bool → np.bool_
+
+4. また、環境によってはGym APIの変更に対応する必要があります。最新バージョンではenv.step()が5つの値を返すようになりました：
+```python
+# 新しいGym APIに対応
+try:
+    # 新しいGym API (v0.26.0以降)
+    next_state, reward, terminated, truncated, info = env.step(action)
+    done = terminated or truncated
+except ValueError:
+    # 古いGym API
+    next_state, reward, done, info = env.step(action)
+```
+
+
 ## ライセンス
 
 本リポジトリのソースコードは[MITライセンス](http://www.opensource.org/licenses/MIT)です。

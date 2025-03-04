@@ -3,6 +3,7 @@ if '__file__' in globals():
     sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 import numpy as np
 import gym
+# commonをdezeroに戻す
 from dezero import Model
 from dezero import optimizers
 import dezero.functions as F
@@ -47,6 +48,10 @@ class Agent:
         self.optimizer_v = optimizers.Adam(self.lr_v).setup(self.v)
 
     def get_action(self, state):
+        # タプルの場合は最初の要素を使用する
+        if isinstance(state, tuple):
+            state = state[0]
+            
         state = state[np.newaxis, :]  # add batch axis
         probs = self.pi(state)
         probs = probs[0]
@@ -54,6 +59,12 @@ class Agent:
         return action, probs[action]
 
     def update(self, state, action_prob, reward, next_state, done):
+        # タプルの場合は最初の要素を使用する
+        if isinstance(state, tuple):
+            state = state[0]
+        if isinstance(next_state, tuple):
+            next_state = next_state[0]
+            
         state = state[np.newaxis, :]  # add batch axis
         next_state = next_state[np.newaxis, :]
 
@@ -88,7 +99,15 @@ for episode in range(episodes):
 
     while not done:
         action, prob = agent.get_action(state)
-        next_state, reward, done, info = env.step(action)
+        
+        # 新しいGym APIに対応
+        try:
+            # 新しいGym API (v0.26.0以降)
+            next_state, reward, terminated, truncated, info = env.step(action)
+            done = terminated or truncated
+        except ValueError:
+            # 古いGym API
+            next_state, reward, done, info = env.step(action)
 
         agent.update(state, prob, reward, next_state, done)
 
