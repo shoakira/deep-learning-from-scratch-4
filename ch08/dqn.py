@@ -93,20 +93,40 @@ class DQNAgent:
     def sync_qnet(self):
         self.qnet_target = copy.deepcopy(self.qnet)
 
-episodes = 300
+
+episodes = 500
 sync_interval = 20
-env = gym.make('CartPole-v0')
+
+# 学習用の環境
+try:
+    # 新しいGym API用
+    env = gym.make('CartPole-v1', render_mode=None)  # 学習中はレンダリング不要
+except TypeError:
+    # 古いGym API用
+    env = gym.make('CartPole-v1')
+
 agent = DQNAgent()
 reward_history = []
 
+# メインループ部分の修正
 for episode in range(episodes):
     state = env.reset()
+    # 新しいAPIでは(state, info)のタプルを返す場合があるため
+    if isinstance(state, tuple):
+        state = state[0]
     done = False
     total_reward = 0
 
     while not done:
         action = agent.get_action(state)
-        next_state, reward, done, info = env.step(action)
+        # 新しいGym APIに対応
+        try:
+            # 新しいGym API (v0.26.0以降)
+            next_state, reward, terminated, truncated, info = env.step(action)
+            done = terminated or truncated
+        except ValueError:
+            # 古いGym API
+            next_state, reward, done, info = env.step(action)
 
         agent.update(state, action, reward, next_state, done)
         state = next_state
@@ -127,16 +147,36 @@ plt.plot(range(len(reward_history)), reward_history)
 plt.show()
 
 
-# === Play CartPole ===
+# プレイ用の環境
+try:
+    # 新しいGym API用
+    play_env = gym.make('CartPole-v1', render_mode="human")  # 人間が見るためのモード
+except TypeError:
+    # 古いGym API用
+    play_env = gym.make('CartPole-v1')
+
 agent.epsilon = 0  # greedy policy
-state = env.reset()
+state = play_env.reset()
+if isinstance(state, tuple):
+    state = state[0]
 done = False
 total_reward = 0
 
 while not done:
     action = agent.get_action(state)
-    next_state, reward, done, info = env.step(action)
+    # 新しいGym APIに対応
+    try:
+        next_state, reward, terminated, truncated, info = play_env.step(action)
+        done = terminated or truncated
+    except ValueError:
+        next_state, reward, done, info = play_env.step(action)
     state = next_state
     total_reward += reward
-    env.render()
+    # render()メソッドの呼び出しは不要（環境作成時に指定済み）
+    # ただし古いAPIでは必要なので条件分岐
+    try:
+        if not hasattr(play_env, 'render_mode') or play_env.render_mode is None:
+            play_env.render()
+    except Exception:
+        pass
 print('Total Reward:', total_reward)

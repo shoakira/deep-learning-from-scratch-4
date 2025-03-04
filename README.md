@@ -98,8 +98,8 @@ class ToInt(AsType):
 
 3. その他の型参照で問題がある場合は同様に置き換えてください：
  - np.int → np.int64
- - np.float → np.float64
- - np.bool → np.bool_
+ - np.float → np.float64 # または np.float32は問題なし
+ - np.bool → np.bool_  # または np.bool8は問題なし
 
 4. また、環境によってはGym APIの変更に対応する必要があります。最新バージョンではenv.step()が5つの値を返すようになりました：
 ```python
