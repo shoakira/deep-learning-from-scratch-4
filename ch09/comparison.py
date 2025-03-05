@@ -7,6 +7,53 @@ import dezero.layers as L
 import matplotlib.pyplot as plt
 import copy
 import random
+from collections import deque  # DQN用に追加
+
+
+# DQN用のReplayBufferクラス
+class ReplayBuffer:
+    """経験再生バッファ - 学習の安定性向上のため過去の経験を保存"""
+    def __init__(self, buffer_size, batch_size):
+        self.buffer = deque(maxlen=buffer_size)  # 最大サイズを超えると古いデータから削除
+        self.batch_size = batch_size
+
+    def add(self, state, action, reward, next_state, done):
+        """新しい経験をバッファに追加"""
+        data = (state, action, reward, next_state, done)
+        self.buffer.append(data)
+
+    def __len__(self):
+        """バッファに保存されているデータ数を返す"""
+        return len(self.buffer)
+
+    def get_batch(self):
+        """バッファからランダムにバッチサイズ分のデータを取り出す"""
+        data = random.sample(self.buffer, self.batch_size)
+
+        # データを種類ごとに分けて配列化
+        state = np.stack([x[0] for x in data])
+        action = np.array([x[1] for x in data])
+        reward = np.array([x[2] for x in data])
+        next_state = np.stack([x[3] for x in data])
+        done = np.array([x[4] for x in data]).astype(np.int32)
+        return state, action, reward, next_state, done
+
+
+# DQN用のQNetクラス
+class QNet(Model):
+    """Q関数をニューラルネットワークで近似するクラス"""
+    def __init__(self, action_size):
+        super().__init__()
+        self.l1 = L.Linear(128)  # 第1層 - 128ユニット
+        self.l2 = L.Linear(128)  # 第2層 - 128ユニット
+        self.l3 = L.Linear(action_size)  # 出力層 - 行動数分のユニット
+
+    def forward(self, x):
+        """順伝播計算 - 状態から各行動のQ値を計算"""
+        x = F.relu(self.l1(x))  # 活性化関数ReLU
+        x = F.relu(self.l2(x))
+        x = self.l3(x)  # 出力層は活性化関数なし
+        return x
 
 
 # Policy Network (共通): 方策（行動選択確率）を表現するニューラルネットワーク
@@ -41,6 +88,101 @@ class ValueNet(Model):
         # 出力層はそのまま（状態価値）
         x = self.l2(x)
         return x
+
+
+# 新たに追加するDQNエージェントクラス
+class DQNAgent:
+    """DQNによる強化学習エージェント"""
+    def __init__(self, lr=0.0005, gamma=0.98, action_size=2):
+        # ハイパーパラメータ設定
+        self.gamma = gamma  # 割引率
+        self.lr = lr  # 学習率
+        self.buffer_size = 10000  # リプレイバッファのサイズ
+        self.batch_size = 32  # バッチサイズ
+        self.action_size = action_size  # 行動の種類数（CartPoleでは左右の2種類）
+
+        # エプシロンを初期値から徐々に減少させる
+        self.epsilon_start = 1.0  # 初期値を1.0に変更
+        self.epsilon_end = 0.05   # 最終的に0.05まで減少
+        self.epsilon_decay = 0.999  # 0.995から緩やかに
+        self.epsilon = self.epsilon_start
+
+        # 各コンポーネントの初期化
+        self.replay_buffer = ReplayBuffer(self.buffer_size, self.batch_size)
+        self.qnet = QNet(self.action_size)  # メインのQ-Network
+        self.qnet_target = QNet(self.action_size)  # ターゲットQ-Network
+        # 初期時点でターゲットネットワークを同期
+        self.qnet_target = copy.deepcopy(self.qnet)
+        self.optimizer = optimizers.Adam(self.lr)  # オプティマイザ
+        self.optimizer.setup(self.qnet)
+        
+        # 他のエージェントと統一するためのステップカウンター
+        self.total_steps = 0
+
+    def get_action(self, state):
+        """状態に基づいて行動を選択（ε-greedy法）"""
+        # Gym環境からの状態がタプルで返される場合、最初の要素のみを使用
+        if isinstance(state, tuple):
+            state = state[0]
+            
+        if np.random.rand() < self.epsilon:
+            # εの確率でランダム行動
+            action = np.random.choice(self.action_size)
+            # 他のエージェントと同じインターフェースのために、ダミーの確率値を返す
+            prob = 1.0 / self.action_size  # 一様分布の確率
+            return action, prob
+        else:
+            # 1-εの確率でQ値最大の行動
+            state = state[np.newaxis, :]  # バッチ次元を追加
+            qs = self.qnet(state)  # Q値を計算
+            action = qs.data.argmax()  # Q値が最大の行動を返す
+            # 他のエージェントと同じインターフェースのために、ダミーの確率値を返す
+            prob = 1.0  # 確定的な選択を表す確率
+            return action, prob
+
+    def update(self, state, action, reward, next_state, done):
+        """経験に基づいてQ関数を更新"""
+        # ステップカウンタの更新
+        self.total_steps += 1
+        
+        # エプシロン減衰
+        self.epsilon = max(self.epsilon_end, self.epsilon * self.epsilon_decay)
+        
+        # 経験をリプレイバッファに追加
+        self.replay_buffer.add(state, action, reward, next_state, done)
+        if len(self.replay_buffer) < self.batch_size:
+            return  # バッファのデータが不足していれば更新しない
+
+        # リプレイバッファからデータをサンプリング
+        state, action, reward, next_state, done = self.replay_buffer.get_batch()
+        
+        # 現在のQ値を計算
+        qs = self.qnet(state)
+        q = qs[np.arange(self.batch_size), action]  # 実際に選んだ行動のQ値
+
+        # ターゲットQ値を計算（TD誤差の目標値）
+        next_qs = self.qnet_target(next_state)
+        next_q = next_qs.max(axis=1)  # 次の状態で最大のQ値を取得
+        next_q.unchain()  # 勾配計算の停止（ターゲットは固定）
+        target = reward + (1 - done) * self.gamma * next_q  # ベルマン方程式
+
+        # 損失関数の計算と最適化
+        loss = F.mean_squared_error(q, target)  # MSE損失
+        self.qnet.cleargrads()  # 勾配のリセット
+        loss.backward()  # 誤差逆伝播
+        self.optimizer.update()  # パラメータ更新
+
+    def sync_qnet(self):
+        """ターゲットネットワークを現在のネットワークで同期"""
+        self.qnet_target = copy.deepcopy(self.qnet)
+        
+    def reset(self):
+        """エピソード間の処理（何もしない）"""
+        pass
+
+    def add(self, reward, prob):
+        """REINFORCEなどと互換性を持たせるためのダミーメソッド"""
+        pass
 
 
 # REINFORCE Agent: REINFORCEアルゴリズムの実装
@@ -395,7 +537,7 @@ class ImprovedActorCriticAgent:
         
         # エントロピー計算（自己エントロピーのみ簡単に計算）
         pi_out = self.pi(state)
-        current_entropy_coef = max(0.0001, self.entropy_coef * (0.9999 ** self.total_steps))
+        current_entropy_coef = max(0.0005, self.entropy_coef * (0.99995 ** self.total_steps))
         entropy = -F.sum(pi_out * F.log(pi_out + 1e-8)) * current_entropy_coef
         
         loss_pi = -F.log(action_prob) * delta + entropy
@@ -442,6 +584,13 @@ def train(agent, env, episodes, decay_rate=0.9995):
                 agent.add(reward, prob)
             elif isinstance(agent, ActorCriticAgent):
                 agent.update(state, prob, reward, next_state, done)
+            # train関数内のDQNの処理部分
+            elif isinstance(agent, DQNAgent):
+                # DQNの更新
+                agent.update(state, action, reward, next_state, done)
+                # ステップ数に基づいてターゲットネットワークを同期（定期的に）
+                if agent.total_steps % 20 == 0:  # 20ステップごとに同期
+                    agent.sync_qnet()
             elif isinstance(agent, ImprovedActorCriticAgent):
                 # 経験バッファに保存
                 agent.store_experience(state, prob, reward, next_state, done)
@@ -471,14 +620,53 @@ def train(agent, env, episodes, decay_rate=0.9995):
             
     return reward_history
 
+
+# DQN用の訓練関数
+def train_dqn(agent, env, episodes, sync_interval=20):
+    reward_history = []
+    
+    for episode in range(episodes):
+        state = env.reset()
+        if isinstance(state, tuple):
+            state = state[0]
+        done = False
+        total_reward = 0
+        step = 0
+        
+        while not done:
+            action, _ = agent.get_action(state)  # DQNはprobを返さないのでアンダースコア
+            
+            try:
+                next_state, reward, terminated, truncated, info = env.step(action)
+                done = terminated or truncated
+            except ValueError:
+                next_state, reward, done, info = env.step(action)
+                
+            # DQNの更新
+            agent.update(state, action, reward, next_state, done)
+            
+            state = next_state
+            total_reward += reward
+            step += 1
+            
+            # ターゲットネットワークの同期
+            if step % sync_interval == 0:
+                agent.sync_qnet()
+                
+        reward_history.append(total_reward)
+        if episode % 100 == 0:
+            print(f"episode: {episode}, total reward: {total_reward:.1f}")
+            
+    return reward_history
+
 # 移動平均の計算関数
 def moving_average(data, window_size):
     """指定されたウィンドウサイズでの移動平均を計算"""
     weights = np.ones(window_size) / window_size
     return np.convolve(data, weights, mode='valid')
 
-# メイン関数
-def main(episodes=500):
+# メイン関数修正
+def main(episodes=1000):
     """各アルゴリズムを実行して比較"""
     
     # 環境の作成
@@ -492,6 +680,7 @@ def main(episodes=500):
     simple_pg_agent = SimplePGAgent()
     actor_critic_agent = ActorCriticAgent()
     improved_ac_agent = ImprovedActorCriticAgent()
+    dqn_agent = DQNAgent()  # DQNエージェントを追加
     
     # 各エージェントのトレーニング
     print("トレーニング開始: REINFORCE")
@@ -506,6 +695,10 @@ def main(episodes=500):
     print("トレーニング開始: Improved Actor-Critic")
     improved_ac_rewards = train(improved_ac_agent, env, episodes)
     
+    print("トレーニング開始: DQN")
+    # train_dqnではなくtrainを使用する（競合を避ける）
+    dqn_rewards = train(dqn_agent, env, episodes)
+    
     # 結果のプロット
     plt.figure(figsize=(12, 8))
     
@@ -513,10 +706,11 @@ def main(episodes=500):
         "REINFORCE": reinforce_rewards,
         "Simple-PG": simple_pg_rewards,
         "Actor-Critic": ac_rewards,
-        "Improved Actor-Critic": improved_ac_rewards
+        "Improved Actor-Critic": improved_ac_rewards,
+        "DQN": dqn_rewards  # DQNの結果を追加
     }
     
-    colors = ['blue', 'green', 'red', 'purple']
+    colors = ['blue', 'green', 'red', 'purple', 'orange']  # 色を1つ追加
     window_size = 50
     
     # 各アルゴリズムの移動平均をプロット
@@ -541,4 +735,4 @@ def main(episodes=500):
 
 # スクリプトを実行
 if __name__ == "__main__":
-    main(episodes=3000)
+    main(episodes=2000)
