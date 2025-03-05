@@ -118,10 +118,40 @@ for episode in range(episodes):
     if episode % 100 == 0:
         print("episode :{}, total reward : {:.1f}".format(episode, total_reward))
 
-# plot
-from common.utils import plot_total_reward
-plot_total_reward(reward_history)
+# 改良版プロット（移動平均を使用）
+import matplotlib.pyplot as plt
+import numpy as np
 
+# 移動平均の計算関数
+def moving_average(data, window_size):
+    """Calculate moving average with specified window size"""
+    weights = np.ones(window_size) / window_size
+    return np.convolve(data, weights, mode='valid')
+
+# グラフ描画設定
+plt.figure(figsize=(10, 6))
+
+# 原データ（透明度を下げて背景に表示）
+plt.plot(reward_history, alpha=0.2, color='gray', label='Raw Rewards')
+
+# 移動平均を計算して表示
+window_size = 50  # 平均化するウィンドウサイズ
+if len(reward_history) > window_size:
+    smoothed_rewards = moving_average(reward_history, window_size)
+    plt.plot(np.arange(window_size-1, len(reward_history)), smoothed_rewards, 
+             linewidth=2, color='blue', label=f'Moving Average ({window_size} episodes)')
+
+plt.xlabel('Episode')
+plt.ylabel('Total Reward')
+plt.title('Actor-Critic Learning Curve')
+plt.legend()
+plt.grid(True, alpha=0.3)
+plt.show()
+
+# 平均報酬を表示（最後の100エピソードの平均）
+if len(reward_history) >= 100:
+    last_100_avg = np.mean(reward_history[-100:])
+    print(f"Average reward over last 100 episodes: {last_100_avg:.1f}")
 
 # === 学習したエージェントのデモンストレーション ===
 # プレイ用の環境（可視化あり）
