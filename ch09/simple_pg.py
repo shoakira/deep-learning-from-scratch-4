@@ -33,6 +33,10 @@ class Agent:
         self.optimizer.setup(self.pi)
 
     def get_action(self, state):
+        # タプルの場合は最初の要素（状態）を取り出す
+        if isinstance(state, tuple):
+            state = state[0]
+        
         state = state[np.newaxis, :]
         probs = self.pi(state)
         probs = probs[0]
@@ -59,19 +63,40 @@ class Agent:
 
 
 episodes = 3000
-env = gym.make('CartPole-v0')
+try:
+    # 新しいGym API用
+    env = gym.make('CartPole-v1')  # v1にアップグレード
+except TypeError:
+    # 古いGym API用
+    env = gym.make('CartPole-v1')
+
 agent = Agent()
 reward_history = []
 
 for episode in range(episodes):
     state = env.reset()
+    # 新しいAPIでは(state, info)のタプルを返す場合に対応
+    if isinstance(state, tuple):
+        state = state[0]
     done = False
     total_reward = 0
 
     while not done:
         action, prob = agent.get_action(state)
-        next_state, reward, done, info = env.step(action)
-
+        
+        # 新しいGym APIに対応
+        try:
+            # 新しいGym API (v0.26.0以降)
+            next_state, reward, terminated, truncated, info = env.step(action)
+            done = terminated or truncated
+        except ValueError:
+            # 古いGym API
+            next_state, reward, done, info = env.step(action)
+        
+        # 次の状態がタプルの場合も対応
+        if isinstance(next_state, tuple):
+            next_state = next_state[0]
+            
         agent.add(reward, prob)
         state = next_state
         total_reward += reward
